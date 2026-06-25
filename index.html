@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>型号匹配回填工具 (VLOOKUP)</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#172033; --line:#334155;
+    --txt:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e;
+    --warn:#f59e0b; --err:#ef4444; --radius:10px;
+  }
+  body[data-theme="light"]{
+    --bg:#f5f7fa; --panel:#ffffff; --panel2:#eef2f7; --line:#d4dae3;
+    --txt:#1e293b; --muted:#64748b; --accent:#93c5fd; --ok:#16a34a;
+    --warn:#d97706; --err:#dc2626;
+  }
+  #themeBtn{margin-left:auto;align-self:center;background:transparent;color:var(--txt);
+    border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+  header{padding:10px 18px;border-bottom:1px solid var(--line);
+    display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0}
+  header .sub{color:var(--muted);font-size:11px}
+  main{padding:12px 18px;max-width:1800px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px}
+  .card h2{font-size:13px;margin:0 0 2px}
+  .card .hint{color:var(--muted);font-size:11px;margin-bottom:5px}
+  textarea{width:100%;min-height:150px;background:var(--panel2);color:var(--txt);
+    border:1px solid var(--line);border-radius:8px;padding:8px;font-family:Consolas,monospace;
+    font-size:13px;resize:vertical;white-space:pre;overflow:auto}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  button{background:var(--accent);color:#04293a;border:none;border-radius:7px;
+    padding:7px 13px;font-weight:600;cursor:pointer;font-size:13px}
+  button.ghost{background:transparent;color:var(--txt);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .toolbar{display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:4px 7px;text-align:left;white-space:nowrap}
+  th{background:var(--panel2);position:sticky;top:0}
+  tr.miss td{color:var(--err)}
+  tr.extra td{color:var(--warn)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;font-weight:600}
+  .tag.ok{background:rgba(34,197,94,.15);color:var(--ok)}
+  .tag.miss{background:rgba(239,68,68,.15);color:var(--err)}
+  .tag.extra{background:rgba(245,158,11,.15);color:var(--warn)}
+  .stat{color:var(--muted);font-size:12px;margin-left:auto}
+  .scroll{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px}
+  /* 结果表：全屏宽 + 单元格可换行，尽量一屏容纳所有列 */
+  #resultWrap{width:96vw;position:relative;left:50%;transform:translateX(-50%)}
+  /* 列宽随内容自适应；型号等内容始终单行不折断，太长则列自动加宽 */
+  #result{table-layout:auto;width:max-content;max-width:100%;margin:0 auto}
+  #result th,#result td{white-space:nowrap;font-size:12px;padding:3px 7px;text-align:center}
+  #result .orig{background:rgba(56,189,248,.10)}
+  #result th.orig{background:rgba(56,189,248,.22)}
+  details{margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px}
+  summary{cursor:pointer;font-weight:600}
+  input[type=text],input[type=password]{background:var(--panel2);color:var(--txt);
+    border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13px}
+  .ocr-target{display:inline-flex;gap:14px;margin:8px 0}
+  label.radio{display:inline-flex;gap:5px;align-items:center;color:var(--muted);cursor:pointer}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--ok);color:#04210f;padding:10px 20px;border-radius:8px;font-weight:600;
+    opacity:0;transition:opacity .25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--err);color:#fff}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>型号匹配回填工具</h1>
+  <span class="sub">左表=要报的型号顺序 · 右表=能报的型号+数据 → 按型号匹配，回填到左表位置，一键复制回 Excel</span>
+  <button id="themeBtn" title="切换深色/浅色">🌙 深色</button>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="card">
+      <h2>① 左表：要报的型号清单（决定输出顺序）</h2>
+      <div class="hint">每行一个型号。第一列当作型号；后面若有自带列也会保留。可直接从 Excel 复制粘贴。</div>
+      <textarea id="left" placeholder="AD5258BRMZ1-R7&#10;LT1763CS8#TRPBF&#10;LT5560EDD#TRPBF&#10;HMC472ALP4ETR&#10;..."></textarea>
+    </div>
+    <div class="card">
+      <h2>② 右表：能报的型号 + 数据（数据源）</h2>
+      <div class="hint">第一列=型号，后面所有列=要回填的数据（数量/品牌/单价/总价/库存/货期…你贴几列就回填几列）。</div>
+      <textarea id="right" placeholder="AD5258BRMZ1-R7&#9;300&#9;ADI&#9;8&#9;2400&#9;in3years&#9;1-2weeks&#10;LT1763CS8#TRPBF&#9;1400&#9;ADI&#9;7.8&#9;10920&#9;24+&#9;1-3weeks&#10;..."></textarea>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button id="run">▶ 匹配回填</button>
+    <button id="copy" class="ghost" disabled>📋 复制结果（含表头）</button>
+    <button id="copyNoHead" class="ghost" disabled>复制（不含表头）</button>
+    <button id="dl" disabled>⬇ 下载报表(.xlsx)</button>
+    <button id="dlCmp" disabled>⬇ 下载对比表(原始+报表·标红)</button>
+    <label class="radio"><input type="checkbox" id="keepRightPn"> 结果里也保留右表型号列（核对用）</label>
+    <span class="stat" id="stat"></span>
+  </div>
+
+  <div class="scroll" id="resultWrap" style="display:none">
+    <table id="result"></table>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== 型号归一化：与项目 src/lib/part-number.ts 完全一致 ===== */
+function normalizePartNumber(input){
+  if(input==null) return "";
+  return input.normalize("NFKC").replace(/\s+/gu,"").toUpperCase();
+}
+
+/* ===== 解析粘贴文本为二维数组 ===== */
+function parseTable(text){
+  const rows=[];
+  text.split(/\r?\n/).forEach(line=>{
+    if(line.trim()==="") return;
+    let cells;
+    if(line.includes("\t")) cells=line.split("\t");
+    else cells=line.split(/ {2,}|\t/);            // 无制表符时按 2+ 空格分列
+    cells=cells.map(c=>c.trim());
+    rows.push(cells);
+  });
+  return rows;
+}
+
+const $=id=>document.getElementById(id);
+let lastResult=null;
+
+/* localStorage 容错：沙箱/隐私模式下访问会抛异常，包起来避免中断脚本 */
+const store={
+  get(k){ try{return localStorage.getItem(k)||"";}catch(e){return "";} },
+  set(k,v){ try{localStorage.setItem(k,v);}catch(e){} }
+};
+
+function toast(msg,isErr){
+  const t=$("toast"); t.textContent=msg;
+  t.className="toast show"+(isErr?" err":"");
+  setTimeout(()=>t.className="toast",1600);
+}
+
+function run(){
+  const leftRows=parseTable($("left").value);
+  const rightRows=parseTable($("right").value);
+  if(!leftRows.length){toast("左表是空的",true);return;}
+  if(!rightRows.length){toast("右表是空的",true);return;}
+
+  // 右表建索引：归一化型号 -> 该行数据列（去掉型号列）
+  const rightDataCols=Math.max(0,...rightRows.map(r=>r.length-1));
+  const map=new Map();
+  const usedKeys=new Set();
+  rightRows.forEach(r=>{
+    const key=normalizePartNumber(r[0]);
+    if(key && !map.has(key)) map.set(key,r);   // 同型号取第一条
+  });
+
+  const leftExtraCols=Math.max(0,...leftRows.map(r=>r.length-1)); // 左表型号后自带的列
+  const keepRightPn=$("keepRightPn").checked;
+
+  const out=[];
+  let okN=0, missN=0;
+  leftRows.forEach(r=>{
+    const pn=r[0]||"";
+    const key=normalizePartNumber(pn);
+    const leftExtra=[]; for(let i=1;i<=leftExtraCols;i++) leftExtra.push(r[i]??"");
+    const hit=map.get(key);
+    let status, data;
+    if(hit){
+      usedKeys.add(key); okN++;
+      status="ok";
+      data=[]; for(let i=1;i<=rightDataCols;i++) data.push(hit[i]??"");
+    }else{
+      missN++; status="miss";
+      data=new Array(rightDataCols).fill("");
+    }
+    out.push({pn, rightPn:hit?hit[0]:"", leftExtra, data, status});
+  });
+
+  // 右表里左表没要的（多出来的）
+  const extras=[];
+  rightRows.forEach(r=>{
+    const key=normalizePartNumber(r[0]);
+    if(key && !usedKeys.has(key)) extras.push(r);
+  });
+
+  const rightPNs=rightRows.map(r=>r[0]).filter(Boolean);
+  lastResult={out,extras,leftExtraCols,rightDataCols,keepRightPn,rightPNs,rightRows};
+  render();
+  $("stat").textContent=`匹配 ${okN} · 未匹配 ${missN} · 右表多余 ${extras.length}`;
+  $("copy").disabled=$("copyNoHead").disabled=$("dl").disabled=$("dlCmp").disabled=false;
+}
+
+/* 固定结果表头；列数 = 表头项数 */
+const HEADERS=["Part Number","Qty","Brand","Unit Price (CNY)","Unit Price (USD)","Total Price (USD)","DC","Lead Time","notice","Weight (g)","Total Weight (g)","Dimensions (cm)","Description"];
+function headerCols(){ return HEADERS; }
+/* 把一行结果补齐到表头列数：第一列=型号，其余=右表数据，缺的留空 */
+function rowCells(o){
+  const n=headerCols().length;
+  const cells=[o.pn,...o.data];
+  while(cells.length<n) cells.push("");
+  return cells.slice(0,n);
+}
+
+function render(){
+  const {out,extras}=lastResult;
+  const {origHead,headers,rows}=buildCompareModel();
+  const span=2+origHead.length+headers.length+1;
+
+  // 表头：数量变化 + 重合度 + 原始块(浅蓝) + 报表块(默认) + 状态
+  let html="<thead><tr><th class=\"sim\">数量变化</th><th class=\"sim\">重合度</th>";
+  origHead.forEach(h=>html+=`<th class="orig">${esc(h)}</th>`);
+  headers.forEach(h=>html+=`<th>${esc(h)}</th>`);
+  html+="<th>状态</th></tr></thead><tbody>";
+
+  out.forEach((o,ri)=>{
+    const r=rows[ri];
+    const miss=o.status==="miss";
+    html+="<tr>";
+    // 数量变化
+    html+=`<td class="sim"${r.qtyDelta?' style="background:#ffcc80;color:#000;font-weight:600"':''}>${esc(r.qtyDelta)}</td>`;
+    // 重合度
+    html+=`<td class="sim"${r.sim.pct<100?' style="color:var(--warn)"':''}>${esc(simText(r.sim))}</td>`;
+    // 原始块：未匹配时型号标红
+    r.orig.forEach((c,i)=>html+=`<td class="orig"${i===0&&miss?' style="color:var(--err)"':''}>${esc(c)}</td>`);
+    // 报表块：近似填入的型号标黄，数量变化标橙，其他变化标红
+    r.report.forEach((c,i)=>{
+      let st="";
+      if(r.yellowReport[i]) st=' style="background:#fff3b0;color:#000"';
+      else if(r.orangeReport[i]) st=' style="background:#ffcc80;color:#000"';
+      else if(r.redReport[i]) st=' style="color:var(--err);font-weight:600"';
+      html+=`<td${st}>${esc(c)}</td>`;
+    });
+    // 右表没有这个型号 → 未匹配；型号相同且数量无变化 → 匹配；型号相同但数量变了 → 提醒核对
+    const matched = o.status!=="miss" && r.sim.pct===100 && !r.qtyDelta;
+    let tag;
+    if(o.status==="miss") tag=`<span class="tag miss">✘ 未匹配</span>`;
+    else if(matched) tag=`<span class="tag ok">✔ 匹配</span>`;
+    else tag=`<span class="tag extra">⚠ 数量有变化，请核对</span>`;
+    html+=`<td>${tag}</td></tr>`;
+  });
+  html+="</tbody>";
+  $("result").innerHTML=html;
+  $("resultWrap").style.display="";
+}
+
+function esc(s){return String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+/* ===== 型号相似度：返回重合百分比 + 差异位置（前缀/后缀） ===== */
+function partSimilarity(a,b){
+  a=String(a||"").trim(); b=String(b||"").trim();
+  if(!a||!b) return {pct:0,label:"无对照"};
+  const A=a.normalize("NFKC").toUpperCase().replace(/\s+/gu,"");
+  const B=b.normalize("NFKC").toUpperCase().replace(/\s+/gu,"");
+  if(A===B) return {pct:100,label:"完全相同"};
+  let cp=0; while(cp<A.length&&cp<B.length&&A[cp]===B[cp]) cp++;          // 公共前缀
+  let cs=0; while(cs<A.length-cp&&cs<B.length-cp&&A[A.length-1-cs]===B[B.length-1-cs]) cs++; // 公共后缀
+  const pct=Math.round((cp+cs)/Math.max(A.length,B.length)*100);
+  let label;
+  if(cp+cs===0) label="完全不同";
+  else if(cp>0&&cs>0) label="前后缀都有差别";
+  else if(cs>0) label="前缀有差别";   // 后段相同、前段不同
+  else label="后缀有差别";            // 前段相同、后段不同
+  return {pct,label};
+}
+/* ===== 对比数据模型：原始块(左表)+报表块，并记录哪些报表格子要标红 ===== */
+function buildCompareModel(){
+  const {out,leftExtraCols}=lastResult;
+  const headers=headerCols();
+  const origN=1+leftExtraCols;
+  const origHead=[]; for(let i=0;i<origN;i++) origHead.push(headers[i]||("列"+(i+1)));
+  const rows=out.map(o=>{
+    const orig=[o.pn,...o.leftExtra]; while(orig.length<origN) orig.push("");
+    const redReport=new Array(headers.length).fill(false);
+    const yellowReport=new Array(headers.length).fill(false);
+    const orangeReport=new Array(headers.length).fill(false);
+    // 只认“完全相同”的型号：匹配上→填右表数据；没匹配上→留空，绝不借用相似/近似型号
+    const sim = o.rightPn ? partSimilarity(o.pn,o.rightPn) : {pct:0,label:"未匹配",pn:""};
+    let reportPN, reportData;
+    if(o.rightPn){
+      reportPN=o.rightPn;        // 精确匹配（同一个型号）
+      reportData=o.data;
+    }else{
+      reportPN="";               // 右表没有这个型号 → 留空，不填别的型号的数据
+      reportData=new Array(lastResult.rightDataCols||0).fill("");
+    }
+    const report=[reportPN,...reportData]; while(report.length<headers.length) report.push("");
+    // 数量变化：报表 Qty 与原始 Qty 不同 → 橙色填充，并算出变化量
+    let qtyDelta="";
+    if(headers.length>1 && leftExtraCols>=1 && String(reportData[0]??"").trim()!=="" && !sameVal(o.leftExtra[0],reportData[0])){
+      orangeReport[1]=true;
+      const a=Number(String(o.leftExtra[0]??"").replace(/,/g,"")), b=Number(String(reportData[0]).replace(/,/g,""));
+      qtyDelta=(!isNaN(a)&&!isNaN(b)) ? ((b-a>0?"+":"")+(b-a)) : "变化";
+    }
+    return {orig,report,redReport,yellowReport,orangeReport,qtyDelta,hasPn:!!String(o.pn).trim(),sim};
+  });
+  return {origHead,headers,rows};
+}
+function simText(s){ return s&&s.pct ? s.pct+"% "+s.label : (s?s.label:""); }
+
+/* ===== 复制(纯文本兜底)：对比布局，Tab 分隔 ===== */
+function buildTSV(withHead){
+  const {origHead,headers,rows}=buildCompareModel();
+  const lines=[];
+  if(withHead) lines.push(["数量变化","重合度",...origHead,...headers].join("\t"));
+  rows.forEach(r=>lines.push([r.qtyDelta,simText(r.sim),...r.orig,...r.report].join("\t")));
+  return lines.join("\n");
+}
+
+/* ===== 复制(带格式 HTML)：对比布局，Arial 12，居中，有型号加黑框，变化标红 ===== */
+function buildHTMLTable(withHead){
+  const {origHead,headers,rows}=buildCompareModel();
+  const F="font-family:Arial,sans-serif;font-size:12pt;";
+  const th=(x,bg)=>`<th style="border:1px solid #000;padding:5px 9px;${F}font-weight:bold;text-align:center;background:${bg}">${esc(x)}</th>`;
+  let h='<table style="border-collapse:collapse;font-family:Arial,sans-serif">';
+  if(withHead){
+    h+='<tr>'+origHead.map(x=>th(x,'#d9e1f2')).join('')+headers.map(x=>th(x,'#e6e6e6')).join('')+'</tr>';
+  }
+  rows.forEach(r=>{
+    const bd=r.hasPn?'border:1px solid #000;':'';
+    const td=(c,red,yellow,orange)=>{
+      const bg=yellow?'#fff3b0':(orange?'#ffcc80':'#ffffff');
+      return `<td style="${bd}padding:5px 9px;${F}text-align:center;background:${bg};color:${red&&!orange&&!yellow?'#ff0000':'#000000'};${red&&!orange&&!yellow?'font-weight:bold;':''}">${esc(c)}</td>`;
+    };
+    h+='<tr>'+r.orig.map(c=>td(c,false,false,false)).join('')+r.report.map((c,i)=>td(c,r.redReport[i],r.yellowReport[i],r.orangeReport[i])).join('')+'</tr>';
+  });
+  return h+'</table>';
+}
+async function copy(withHead){
+  if(!lastResult) return;
+  const html=buildHTMLTable(withHead);
+  const text=buildTSV(withHead);
+  // 优先：现代剪贴板 API 同时写 HTML(带格式) + 纯文本(兜底)
+  if(navigator.clipboard && window.ClipboardItem && window.isSecureContext){
+    try{
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html":new Blob([html],{type:"text/html"}),
+        "text/plain":new Blob([text],{type:"text/plain"})
+      })]);
+      toast("已复制(带格式)，去 Excel 按 Ctrl+V"); return;
+    }catch(e){ /* 走兜底 */ }
+  }
+  // 兜底：选中渲染好的 HTML 再 execCommand 复制（file:///沙箱也能带格式）
+  try{
+    const div=document.createElement("div");
+    div.style.position="fixed"; div.style.left="-99999px"; div.style.top="0";
+    div.innerHTML=html; document.body.appendChild(div);
+    const range=document.createRange(); range.selectNode(div);
+    const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    const ok=document.execCommand("copy");
+    sel.removeAllRanges(); document.body.removeChild(div);
+    toast(ok?"已复制(带格式)，去 Excel 按 Ctrl+V":"复制失败，请手动选中复制",!ok);
+  }catch(e){ toast("复制失败："+e.message,true); }
+}
+
+/* ===== 下载 Excel：居中、有型号的行加框线、字体大、列宽自动 ===== */
+async function downloadXlsx(){
+  if(!lastResult) return;
+  if(typeof ExcelJS==="undefined"){ toast("ExcelJS 未加载（需联网），改用复制",true); return; }
+  const headers=headerCols();
+  const dataArr=lastResult.out.map(o=>rowCells(o));
+
+  // 纯数字（可带千分位逗号/小数）转成真正的数值；型号列(0)及含字母/横杠的保持文本
+  const numify=(v,col)=>{
+    if(col===0) return v;
+    const s=String(v).trim();
+    if(s!=="" && /^-?\d{1,3}(,\d{3})*(\.\d+)?$|^-?\d+(\.\d+)?$/.test(s))
+      return Number(s.replace(/,/g,""));
+    return v;
+  };
+
+  // 先按内容算好每列宽度（中文/全角按 2 计宽）
+  const widths=headers.map((h,i)=>{
+    let max=0;
+    for(const row of [headers,...dataArr]){
+      const v=row[i]==null?"":String(row[i]);
+      let w=0; for(const ch of v) w+=(ch.charCodeAt(0)>255?2:1);
+      if(w>max) max=w;
+    }
+    return Math.min(Math.max(max+2,6),60);
+  });
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet("报价");
+  // 关键：先定义列(含宽度)，再填数据 —— 浏览器里这种写法列宽最可靠
+  ws.columns=headers.map((h,i)=>({width:widths[i]}));
+
+  const border={style:"thin",color:{argb:"FF000000"}};
+  const allBorder={top:border,left:border,bottom:border,right:border};
+  const center={vertical:"middle",horizontal:"center",wrapText:false};
+
+  // 表头行
+  const headRow=ws.addRow(headers);
+  headRow.height=22;
+  headRow.eachCell(c=>{
+    c.alignment=center;
+    c.font={bold:true,size:12};
+    c.border=allBorder;
+    c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFE6E6E6"}};
+  });
+
+  // 数据行：居中、字号 12；有型号的行加框线
+  lastResult.out.forEach((o,ri)=>{
+    const r=ws.addRow(dataArr[ri].map((v,i)=>numify(v,i)));
+    r.height=20;
+    const hasPn=!!String(o.pn).trim();
+    r.eachCell({includeEmpty:true},c=>{
+      c.alignment=center;
+      c.font={size:12};
+      if(hasPn) c.border=allBorder;
+    });
+  });
+
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="报价_"+new Date().toISOString().slice(0,10)+".xlsx";
+  a.click(); URL.revokeObjectURL(a.href);
+  toast("已下载 Excel");
+}
+
+/* ===== 数值/型号是否相等（用于对比） ===== */
+function numify1(v,col){
+  if(col===0) return v;
+  const s=String(v).trim();
+  if(s!=="" && /^-?\d{1,3}(,\d{3})*(\.\d+)?$|^-?\d+(\.\d+)?$/.test(s)) return Number(s.replace(/,/g,""));
+  return v;
+}
+function sameVal(a,b){
+  const sa=String(a??"").trim(), sb=String(b??"").trim();
+  if(sa===""||sb==="") return true;                 // 一方为空不算“变化”
+  const na=Number(sa.replace(/,/g,"")), nb=Number(sb.replace(/,/g,""));
+  if(!isNaN(na)&&!isNaN(nb)) return na===nb;          // 数字按数值比（忽略千分位）
+  return sa.toUpperCase()===sb.toUpperCase();
+}
+
+/* ===== 下载对比表：原始(左表)+报表 并排，型号/Qty 变了标红 ===== */
+async function downloadCompareXlsx(){
+  if(!lastResult) return;
+  if(typeof ExcelJS==="undefined"){ toast("ExcelJS 未加载（需联网）",true); return; }
+  const {origHead,headers,rows}=buildCompareModel();
+  const origN=origHead.length;                        // 原始块列数
+  const allHead=[...origHead,...headers];             // 原始块 + 报表块
+
+  // 列宽
+  const widthsOf=arr=>{
+    let max=0; for(const s of arr){ const v=s==null?"":String(s); let w=0; for(const ch of v) w+=(ch.charCodeAt(0)>255?2:1); if(w>max) max=w; } return Math.min(Math.max(max+2,6),60);
+  };
+  const colWidths=[];
+  for(let i=0;i<origN;i++) colWidths.push(widthsOf([origHead[i],...rows.map(r=>r.orig[i])]));
+  for(let i=0;i<headers.length;i++) colWidths.push(widthsOf([headers[i],...rows.map(r=>r.report[i])]));
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet("对比");
+  ws.columns=colWidths.map(w=>({width:w}));
+
+  const border={style:"thin",color:{argb:"FF000000"}};
+  const allBorder={top:border,left:border,bottom:border,right:border};
+  const center={vertical:"middle",horizontal:"center",wrapText:false};
+
+  // 表头
+  const headRow=ws.addRow(allHead);
+  headRow.height=22;
+  headRow.eachCell((c,col)=>{
+    c.alignment=center; c.border=allBorder;
+    c.font={bold:true,size:12};
+    // 给两个块不同底色，便于区分
+    c.fill={type:"pattern",pattern:"solid",fgColor:{argb: col<=origN?"FFD9E1F2":"FFE6E6E6"}};
+  });
+
+  // 数据
+  rows.forEach(r=>{
+    const vals=[...r.orig,...r.report].map((v,i)=>numify1(v,i===0?0:(i===origN?0:1)));
+    const row=ws.addRow(vals);
+    row.height=20;
+    row.eachCell({includeEmpty:true},(c,col)=>{
+      c.alignment=center;
+      const ri2 = col-origN-1;                              // 报表块内的列下标
+      const isYellow = col>origN && r.yellowReport[ri2];    // 近似填入标黄
+      const isOrange = col>origN && r.orangeReport[ri2];    // 数量变化标橙
+      const isRed = col>origN && r.redReport[ri2] && !isYellow && !isOrange;  // 其他变化标红
+      c.font={size:12, color: isRed?{argb:"FFFF0000"}:undefined, bold:isRed||false};
+      if(isYellow) c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFF3B0"}};
+      else if(isOrange) c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFFFCC80"}};
+      if(r.hasPn) c.border=allBorder;
+    });
+  });
+
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="报价对比_"+new Date().toISOString().slice(0,10)+".xlsx";
+  a.click(); URL.revokeObjectURL(a.href);
+  toast("已下载对比表");
+}
+
+$("run").onclick=run;
+$("copy").onclick=()=>copy(true);
+$("copyNoHead").onclick=()=>copy(false);
+$("dl").onclick=downloadXlsx;
+$("dlCmp").onclick=downloadCompareXlsx;
+
+/* ===== 主题切换（深色/浅色），记住选择 ===== */
+function applyTheme(t){
+  document.body.setAttribute("data-theme",t);
+  $("themeBtn").textContent = t==="light" ? "☀️ 浅色" : "🌙 深色";
+}
+applyTheme(store.get("theme")||"light");
+$("themeBtn").onclick=()=>{
+  const next = document.body.getAttribute("data-theme")==="light" ? "dark" : "light";
+  applyTheme(next); store.set("theme",next);
+};
+$("keepRightPn").onchange=()=>{ if(lastResult){render();} };
+</script>
+</body>
+</html>
