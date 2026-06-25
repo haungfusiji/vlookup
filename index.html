@@ -30,7 +30,7 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px}
   .card h2{font-size:13px;margin:0 0 2px}
   .card .hint{color:var(--muted);font-size:11px;margin-bottom:5px}
-  textarea{width:100%;min-height:150px;background:var(--panel2);color:var(--txt);
+  textarea{width:100%;height:160px;min-height:60px;background:var(--panel2);color:var(--txt);
     border:1px solid var(--line);border-radius:8px;padding:8px;font-family:Consolas,monospace;
     font-size:13px;resize:vertical;white-space:pre;overflow:auto}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
@@ -50,8 +50,14 @@
   .tag.extra{background:rgba(245,158,11,.15);color:var(--warn)}
   .stat{color:var(--muted);font-size:12px;margin-left:auto}
   .scroll{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px}
+  /* 中间拖动条：上下拖，自由调节输入框与结果区的高度 */
+  #splitBar{display:none;height:16px;width:96vw;max-width:100%;margin:6px 0;cursor:row-resize;
+    position:relative;left:50%;transform:translateX(-50%);touch-action:none}
+  #splitBar::before{content:"";position:absolute;left:50%;top:6px;transform:translateX(-50%);
+    width:90px;height:5px;border-radius:99px;background:var(--line)}
+  #splitBar:hover::before{background:var(--accent)}
   /* 结果表：全屏宽 + 单元格可换行，尽量一屏容纳所有列 */
-  #resultWrap{width:96vw;position:relative;left:50%;transform:translateX(-50%)}
+  #resultWrap{width:96vw;position:relative;left:50%;transform:translateX(-50%);height:55vh;max-height:none}
   /* 列宽随内容自适应；型号等内容始终单行不折断，太长则列自动加宽 */
   #result{table-layout:auto;width:max-content;max-width:100%;margin:0 auto}
   #result th,#result td{white-space:nowrap;font-size:12px;padding:3px 7px;text-align:center}
@@ -101,6 +107,8 @@
     <label class="radio"><input type="checkbox" id="keepRightPn"> 结果里也保留右表型号列（核对用）</label>
     <span class="stat" id="stat"></span>
   </div>
+
+  <div id="splitBar" title="上下拖动：调节输入框和结果区的高度"></div>
 
   <div class="scroll" id="resultWrap" style="display:none">
     <table id="result"></table>
@@ -248,6 +256,7 @@ function render(){
   html+="</tbody>";
   $("result").innerHTML=html;
   $("resultWrap").style.display="";
+  $("splitBar").style.display="";   // 有结果后才显示中间的拖动条
 }
 
 function esc(s){return String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
@@ -519,6 +528,36 @@ $("themeBtn").onclick=()=>{
   applyTheme(next); store.set("theme",next);
 };
 $("keepRightPn").onchange=()=>{ if(lastResult){render();} };
+
+/* ===== 中间拖动条：上下拖，自由调节两个输入框 与 结果区 的高度 ===== */
+(function(){
+  const bar=$("splitBar"), L=$("left"), R=$("right"), res=$("resultWrap");
+  if(!bar) return;
+  let sy=0, hInput=0, hRes=0;
+  const onMove=ev=>{
+    const d=ev.clientY-sy;
+    const ni=Math.max(60, Math.min(hInput+d, window.innerHeight*0.8));   // 输入框高度
+    const nr=Math.max(120, Math.min(hRes-d, window.innerHeight*0.92));   // 结果区高度（反向）
+    L.style.height=R.style.height=ni+"px";
+    res.style.height=nr+"px";
+  };
+  const onUp=ev=>{
+    try{bar.releasePointerCapture(ev.pointerId);}catch(e){}
+    bar.removeEventListener("pointermove",onMove);
+    bar.removeEventListener("pointerup",onUp);
+    bar.removeEventListener("pointercancel",onUp);
+  };
+  bar.addEventListener("pointerdown",e=>{
+    e.preventDefault();
+    sy=e.clientY;
+    hInput=L.getBoundingClientRect().height;
+    hRes=res.getBoundingClientRect().height;
+    try{bar.setPointerCapture(e.pointerId);}catch(err){}
+    bar.addEventListener("pointermove",onMove);
+    bar.addEventListener("pointerup",onUp);
+    bar.addEventListener("pointercancel",onUp);
+  });
+})();
 </script>
 </body>
 </html>
